@@ -28,7 +28,7 @@ const Draw = () => {
         winners: [] as string[],
         processedEntries: [] as string[],
         manualRounds: '',
-        useManualRounds: false,
+        // Removed useManualRounds since both input methods are always available
         originalEntries: [] as { id: number, entry: string }[],
         showInitialEntries: false,
         saveStatus: null as string | null,
@@ -39,10 +39,15 @@ const Draw = () => {
         selectedIteration: null as number | null,
         currentDrawId: null as string | null,
         savingError: null as string | null,
-        resetDice: false
+        resetDice: false,
+        fixedWinnerNumber: '', // New field to store the serial number of the entry that should win
+        showFixedWinnerInput: true // New state to control input visibility
     });
 
     const drawIdRef = useRef<string | null>(null);
+
+    // New state variable to track which method was last used to set rounds
+    const [lastSetBy, setLastSetBy] = useState<'manual' | 'dice' | null>(null);
 
     // Memoize expensive calculations
     const validEntriesCount = useMemo(() =>
@@ -116,20 +121,22 @@ const Draw = () => {
             winners: [],
             shuffleError: null
         }));
-    }, []);
-
-    // Optimize handle roll complete
+    }, []);    // Optimize handle roll complete
     const handleRollComplete = useCallback((total: number) => {
         setDrawState(prev => ({
             ...prev,
             isRolling: false,
             diceResult: total,
-            numRounds: total
+            numRounds: total,
+            // Update manual rounds to match dice result for consistency in UI
+            manualRounds: total.toString()
         }));
-    }, []);
-
-    const handleManualRoundsChange = (value: string) => {
+        // Update the last set by method
+        setLastSetBy('dice');
+    }, []); const handleManualRoundsChange = (value: string) => {
         const filteredValue = value.replace(/[^0-9]/g, '');
+
+        // First update the manual rounds field value
         setDrawState(prev => ({
             ...prev,
             manualRounds: filteredValue
@@ -137,30 +144,24 @@ const Draw = () => {
 
         if (filteredValue !== '') {
             const rounds = parseInt(filteredValue, 10);
+            // Update diceResult and numRounds as this is the last action
             setDrawState(prev => ({
                 ...prev,
                 diceResult: rounds,
                 numRounds: rounds
             }));
+            // Update the last set by method
+            setLastSetBy('manual');
         } else {
             setDrawState(prev => ({
                 ...prev,
                 diceResult: null,
                 numRounds: 0
             }));
+            // Clear last set method since no valid rounds
+            setLastSetBy(null);
         }
-    }
-
-    const toggleRoundsMode = () => {
-        setDrawState(prev => ({
-            ...prev,
-            useManualRounds: !prev.useManualRounds,
-            diceResult: !prev.useManualRounds
-                ? (prev.manualRounds !== '' ? parseInt(prev.manualRounds, 10) : null)
-                : null,
-            manualRounds: prev.useManualRounds ? '' : prev.manualRounds
-        }));
-    };
+    }// No longer need the toggleRoundsMode function as both input modes are always available
 
     // Optimize start promo with useCallback
     const startPromo = useCallback(async () => {
@@ -210,7 +211,7 @@ const Draw = () => {
 
         // For display, convert internal entries to display entries
         const displayShuffled = currentShuffled.map(entry => entryMapping.get(entry) || entry);
-        
+
         // Set initial shuffle state IMMEDIATELY
         setDrawState(prev => ({
             ...prev,
@@ -222,16 +223,16 @@ const Draw = () => {
             iteration: 0,
             entries: [...displayShuffled]
         };
-        
+
         // Create a Map to store iteration results by iteration number to prevent duplicates
         const iterationResultsMap = new Map<number, { iteration: number, entries: string[] }>();
         iterationResultsMap.set(0, initialIteration);
-        
+
         setDrawState(prev => ({
             ...prev,
             iterationResults: [initialIteration]
         }));
-        
+
         // Create an in-memory queue for storing iterations until drawId is available
         const iterationQueue: { iteration: number, entries: string[] }[] = [];
         // Track which iterations have been saved to prevent duplicates
@@ -268,7 +269,7 @@ const Draw = () => {
                     verificationCode: result.verificationCode || null,
                     saveStatus: "Draw created, shuffling in progress..."
                 }));
-                
+
                 // Process any queued iterations once we have the drawId
                 if (iterationQueue.length > 0 && drawId) {
                     console.log(`Processing ${iterationQueue.length} queued iterations`);
@@ -291,7 +292,7 @@ const Draw = () => {
                         }
                     }
                 }
-                
+
                 return drawId;
             } catch (error) {
                 console.error("Error creating draw:", error);
@@ -306,31 +307,31 @@ const Draw = () => {
         try {
             // Process each round sequentially but with minimal delay
             const totalRounds = drawState.diceResult || 0;
-            
+
             // Ensure totalRounds is a valid number
             if (!totalRounds || isNaN(totalRounds) || totalRounds <= 0) {
                 throw new Error("Invalid number of rounds");
             }
-            
+
             // Start shuffling IMMEDIATELY, don't wait for database
             // Process each round one by one
             for (let i = 0; i < totalRounds; i++) {
                 // Perform the shuffle
                 currentShuffled = await multiShuffle(currentShuffled, 3);
-                
+
                 // Store this iteration result
                 const iterationResult = {
                     iteration: i + 1,
                     entries: [...currentShuffled]
                 };
-                
+
                 // Add to our map to prevent duplicates
                 iterationResultsMap.set(i + 1, iterationResult);
-                
+
                 // Convert map to array and update state
                 const allIterations = Array.from(iterationResultsMap.values())
                     .sort((a, b) => a.iteration - b.iteration);
-                
+
                 // Update UI for each round
                 setDrawState(prev => ({
                     ...prev,
@@ -338,18 +339,18 @@ const Draw = () => {
                     shuffledEntries: [...currentShuffled],
                     iterationResults: allIterations
                 }));
-                
+
                 // Very minimal delay for visual feedback (far less than original 300ms)
                 if (i < totalRounds - 1) {
                     await new Promise(resolve => setTimeout(resolve, 50));
                 }
-                
+
                 // Add current iteration to queue
                 iterationQueue.push({
                     iteration: i + 1,
                     entries: [...currentShuffled]
                 });
-                
+
                 // If we have a draw ID, save iteration to DB without waiting for response
                 if (drawId) {
                     if (!savedIterations.has(i + 1)) {
@@ -371,7 +372,7 @@ const Draw = () => {
 
             // Make sure we have a drawId by the end, and process any remaining queue
             drawId = await createDrawPromise;
-            
+
             if (drawId && iterationQueue.length > 0) {
                 console.log(`Processing any remaining queued iterations (${iterationQueue.length})`);
                 // Double-check that all iterations were saved
@@ -393,7 +394,7 @@ const Draw = () => {
                     }
                 }
             }
-            
+
         } catch (error) {
             console.error("Error during shuffle:", error);
             setDrawState(prev => ({
@@ -407,10 +408,52 @@ const Draw = () => {
                 ...prev,
                 currentRound: drawState.diceResult || 0,
                 isShuffling: false
-            }));
-
-            // Set the winners (top entries after shuffling based on numWinners)
+            }));            // Handle fixed winner if specified
             if (currentShuffled.length > 0) {
+                // Check if a fixed winner serial number has been specified
+                if (drawState.fixedWinnerNumber && !isNaN(parseInt(drawState.fixedWinnerNumber, 10))) {
+                    const fixedWinnerIndex = parseInt(drawState.fixedWinnerNumber, 10) - 1; // Convert to 0-based index
+
+                    if (fixedWinnerIndex >= 0 && fixedWinnerIndex < drawState.originalEntries.length) {
+                        // Find the entry in the original entries that corresponds to the serial number
+                        const entryToWin = drawState.originalEntries[fixedWinnerIndex].entry;
+
+                        // Find the entry in the shuffled entries
+                        const entryIndex = currentShuffled.findIndex(e =>
+                            e === entryToWin || e.startsWith(`${entryToWin}-`)
+                        );
+
+                        if (entryIndex !== -1) {
+                            // Remove the entry from its current position
+                            const entryToMove = currentShuffled.splice(entryIndex, 1)[0];
+                            // Insert it at the beginning
+                            currentShuffled.unshift(entryToMove);                            // Update the final shuffle results
+                            setDrawState(prev => ({
+                                ...prev,
+                                shuffledEntries: [...currentShuffled]
+                            }));
+                            
+                            // Update the final iteration in the database with the fixed winner at the top
+                            if (drawId) {                                // Use the final iteration number
+                                const finalIteration = drawState.diceResult || 0;
+                                console.log(`Updating final iteration ${finalIteration} with fixed winner`);
+                                
+                                // Update the final iteration with the fixed winner at the top
+                                addIteration({
+                                    drawId,
+                                    iteration: finalIteration,
+                                    entries: currentShuffled
+                                }).then(() => {
+                                    console.log(`Updated iteration ${finalIteration} with fixed winner`);
+                                }).catch(error => {
+                                    console.error(`Error updating iteration ${finalIteration} with fixed winner:`, error);
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // Set the winners (top entries after shuffling based on numWinners)
                 if (drawState.numWinners === 1) {
                     setDrawState(prev => ({
                         ...prev,
@@ -424,12 +467,15 @@ const Draw = () => {
                         winners: selectedWinners,
                         winner: selectedWinners[0]
                     }));
-                }
-
-                // Save the winners with suffixes to DB
+                }                // Save the winners with suffixes to DB (currentShuffled already has the fixed winner at position 0 if specified)
                 if (drawId) {
                     const winnersWithSuffix = currentShuffled.slice(0, drawState.numWinners);
                     saveWinnersToDB(drawId, winnersWithSuffix);
+                    
+                    // Log confirmation when a fixed winner was used
+                    if (drawState.fixedWinnerNumber && !isNaN(parseInt(drawState.fixedWinnerNumber))) {
+                        console.log(`Saved winners to database with fixed winner ${winnersWithSuffix[0]} at position 1`);
+                    }
                 } else {
                     console.error("Cannot save winners: drawId is not available");
                 }
@@ -505,9 +551,7 @@ const Draw = () => {
                     setTimeout(() => setDrawState(prev => ({ ...prev, saveStatus: null })), 3000);
                 }
             }
-        }
-
-        // Reset all state
+        }        // Reset all state        
         setDrawState({
             promoTitle: '',
             entries: [''],
@@ -526,7 +570,6 @@ const Draw = () => {
             winners: [],
             processedEntries: [],
             manualRounds: '',
-            useManualRounds: false,
             originalEntries: [],
             showInitialEntries: false,
             saveStatus: null,
@@ -537,7 +580,9 @@ const Draw = () => {
             selectedIteration: null,
             currentDrawId: null,
             savingError: null,
-            resetDice: true
+            resetDice: true,
+            fixedWinnerNumber: '',
+            showFixedWinnerInput: true
         });
         drawIdRef.current = null;
 
@@ -548,6 +593,7 @@ const Draw = () => {
 
         window.location.reload();
     }, [drawState.winners.length]);
+
 
     // Add a new state for the current time
     const [currentTime, setCurrentTime] = useState(new Date());
@@ -658,18 +704,12 @@ const Draw = () => {
                             >
                                 <div className="section-header mb-3 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 sm:gap-0">
                                     <h3 className="text-sm md:text-base font-medium text-gray-800">Shuffle Rounds</h3>
-                                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 w-full sm:w-auto">
-                                        {/* Toggle between dice and manual input */}
-                                        <div className="flex items-center">
-                                            <label className="text-xs md:text-sm text-gray-600 flex items-center">
-                                                <button
-                                                    onClick={toggleRoundsMode}
-                                                    className={`w-4 h-4 rounded mr-2 border ${drawState.useManualRounds ? 'bg-yellow-500 border-yellow-600' : 'bg-gray-200 border-gray-300'}`}
-                                                    disabled={drawState.promoStarted}
-                                                />
-                                                Manual rounds
-                                            </label>
-                                        </div>
+                                    <div className="flex items-center gap-2">                                        {/* Small indicator showing which method was last used */}
+                                        {drawState.diceResult !== null && (
+                                            <span className="text-xs text-gray-500">
+                                                Last set by: {drawState.isRolling ? "Rolling..." : lastSetBy === 'manual' ? "Manual input" : "Dice roll"}
+                                            </span>
+                                        )}
                                         <motion.div
                                             className="rounds-display text-xs md:text-sm px-2 py-1 text-yellow-700 rounded-md whitespace-nowrap"
                                             initial={{ scale: 1 }}
@@ -687,67 +727,63 @@ const Draw = () => {
                                     </div>
                                 </div>
 
-                                <AnimatePresence mode="wait">
-                                    {drawState.useManualRounds ? (
-                                        <motion.div
-                                            key="manual"
-                                            initial={{ opacity: 0, y: 10 }}
-                                            animate={{ opacity: 1, y: 0 }}
-                                            exit={{ opacity: 0, y: 10 }}
-                                            className="mb-4"
-                                        >
-                                            <label className="block text-xs text-gray-600 mb-1">Number of rounds:</label>
-                                            <input
-                                                type="text"
-                                                value={drawState.manualRounds}
-                                                onChange={(e) => handleManualRoundsChange(e.target.value)}
-                                                disabled={drawState.promoStarted}
-                                                placeholder="Enter number of rounds"
-                                                className="w-full px-3 py-2 bg-gray-100 border border-gray-300 text-black rounded-md shadow-sm focus:outline-none"
-                                            />
-                                        </motion.div>
-                                    ) : (
-                                        <motion.div
-                                            key="dice"
-                                            initial={{ opacity: 0, y: 10 }}
-                                            animate={{ opacity: 1, y: 0 }}
-                                            exit={{ opacity: 0, y: 10 }}
-                                        >
-                                            <div className="dice-controls mb-4 flex gap-4 items-center">
-                                                <div className="dice-count-selector">
-                                                    <label className="text-xs md:text-sm text-gray-600 mr-2">Dice:</label>
-                                                    <select
-                                                        value={drawState.diceCount}
-                                                        onChange={(e) => setDrawState(prev => ({ ...prev, diceCount: Number(e.target.value) }))}
-                                                        disabled={drawState.promoStarted || drawState.isRolling}
-                                                        className="text-xs md:text-sm bg-gray-100 border border-gray-300 text-black rounded px-2 py-1 "
-                                                    >
-                                                        {[1, 2, 3, 4, 5].map(num => (
-                                                            <option key={num} value={num}>{num}</option>
-                                                        ))}
-                                                    </select>
-                                                </div>
-                                                <motion.button
-                                                    className="bg-green-500  text-black text-xs md:text-sm py-1 px-3 rounded-md font-medium"
-                                                    onClick={rollDice}
-                                                    disabled={drawState.promoStarted}
-                                                    whileHover={{ scale: 1.05 }}
-                                                    whileTap={{ scale: 0.95 }}
-                                                    transition={{ duration: 0.2 }}
-                                                >
-                                                    Roll Dice
-                                                </motion.button>
-                                            </div>
+                                {/* Manual rounds input - always visible */}
+                                <motion.div
+                                    key="manual"
+                                    initial={{ opacity: 0, y: 10 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    className="mb-4"
+                                >
+                                    <label className="block text-xs text-gray-600 mb-1">Enter number of rounds:</label>
+                                    <input
+                                        type="text"
+                                        value={drawState.manualRounds}
+                                        onChange={(e) => handleManualRoundsChange(e.target.value)}
+                                        disabled={drawState.promoStarted}
+                                        placeholder="Enter number of rounds"
+                                        className="w-full px-3 py-2 bg-gray-100 border border-gray-300 text-black rounded-md shadow-sm focus:outline-none"
+                                    />
+                                </motion.div>
 
-                                            <MultipleDice
-                                                isRolling={drawState.isRolling}
-                                                onRollComplete={handleRollComplete}
-                                                diceCount={drawState.diceCount}
-                                                reset={drawState.resetDice}
-                                            />
-                                        </motion.div>
-                                    )}
-                                </AnimatePresence>
+                                {/* Dice section - always visible */}
+                                <motion.div
+                                    key="dice"
+                                    initial={{ opacity: 0, y: 10 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                >
+                                    <div className="dice-controls mb-4 flex gap-4 items-center">
+                                        <div className="dice-count-selector">
+                                            <label className="text-xs md:text-sm text-gray-600 mr-2">Dice:</label>
+                                            <select
+                                                value={drawState.diceCount}
+                                                onChange={(e) => setDrawState(prev => ({ ...prev, diceCount: Number(e.target.value) }))}
+                                                disabled={drawState.promoStarted || drawState.isRolling}
+                                                className="text-xs md:text-sm bg-gray-100 border border-gray-300 text-black rounded px-2 py-1 "
+                                            >
+                                                {[1, 2, 3, 4, 5].map(num => (
+                                                    <option key={num} value={num}>{num}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <motion.button
+                                            className="bg-green-500  text-black text-xs md:text-sm py-1 px-3 rounded-md font-medium"
+                                            onClick={rollDice}
+                                            disabled={drawState.promoStarted}
+                                            whileHover={{ scale: 1.05 }}
+                                            whileTap={{ scale: 0.95 }}
+                                            transition={{ duration: 0.2 }}
+                                        >
+                                            Roll Dice
+                                        </motion.button>
+                                    </div>
+
+                                    <MultipleDice
+                                        isRolling={drawState.isRolling}
+                                        onRollComplete={handleRollComplete}
+                                        diceCount={drawState.diceCount}
+                                        reset={drawState.resetDice}
+                                    />
+                                </motion.div>
                             </motion.div>
                         </div>
 
@@ -872,15 +908,14 @@ const Draw = () => {
                                                                 <button
                                                                     key="initial"
                                                                     onClick={() => setDrawState(prev => ({ ...prev, selectedIteration: 0 }))}
-                                                                    className={`px-2 py-1 text-black dark:text-black text-xs rounded ${
-                                                                        drawState.selectedIteration === 0
+                                                                    className={`px-2 py-1 text-black dark:text-black text-xs rounded ${drawState.selectedIteration === 0
                                                                             ? 'bg-yellow-500 text-black font-medium'
                                                                             : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                                                                    }`}
+                                                                        }`}
                                                                 >
                                                                     Initial
                                                                 </button>
-                                                                
+
                                                                 {/* For many rounds, show a limited set with ellipsis */}
                                                                 {drawState.iterationResults.length > 12 ? (
                                                                     <>
@@ -889,34 +924,32 @@ const Draw = () => {
                                                                             <button
                                                                                 key={iter.iteration}
                                                                                 onClick={() => setDrawState(prev => ({ ...prev, selectedIteration: iter.iteration }))}
-                                                                                className={`px-2 py-1 text-black dark:text-black text-xs rounded ${
-                                                                                    drawState.selectedIteration === iter.iteration
+                                                                                className={`px-2 py-1 text-black dark:text-black text-xs rounded ${drawState.selectedIteration === iter.iteration
                                                                                         ? 'bg-yellow-500 text-black font-medium'
                                                                                         : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                                                                                }`}
+                                                                                    }`}
                                                                             >
                                                                                 Round {iter.iteration}
                                                                             </button>
                                                                         ))}
-                                                                        
+
                                                                         {/* Ellipsis indicator */}
                                                                         <span className="px-2 py-1 text-gray-500">...</span>
-                                                                        
+
                                                                         {/* Last few rounds */}
                                                                         {drawState.iterationResults.slice(-4).map((iter) => (
                                                                             <button
                                                                                 key={iter.iteration}
                                                                                 onClick={() => setDrawState(prev => ({ ...prev, selectedIteration: iter.iteration }))}
-                                                                                className={`px-2 py-1 text-black dark:text-black text-xs rounded ${
-                                                                                    drawState.selectedIteration === iter.iteration
+                                                                                className={`px-2 py-1 text-black dark:text-black text-xs rounded ${drawState.selectedIteration === iter.iteration
                                                                                         ? 'bg-yellow-500 text-black font-medium'
                                                                                         : iter.iteration === drawState.diceResult
                                                                                             ? 'bg-yellow-200 text-yellow-800 hover:bg-yellow-300 border border-yellow-500'
                                                                                             : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                                                                                }`}
+                                                                                    }`}
                                                                             >
-                                                                                {iter.iteration === drawState.diceResult 
-                                                                                    ? `Final (Round ${iter.iteration})` 
+                                                                                {iter.iteration === drawState.diceResult
+                                                                                    ? `Final (Round ${iter.iteration})`
                                                                                     : `Round ${iter.iteration}`}
                                                                             </button>
                                                                         ))}
@@ -927,19 +960,18 @@ const Draw = () => {
                                                                         <button
                                                                             key={iter.iteration}
                                                                             onClick={() => setDrawState(prev => ({ ...prev, selectedIteration: iter.iteration }))}
-                                                                            className={`px-2 py-1 text-black dark:text-black text-xs rounded ${
-                                                                                drawState.selectedIteration === iter.iteration
+                                                                            className={`px-2 py-1 text-black dark:text-black text-xs rounded ${drawState.selectedIteration === iter.iteration
                                                                                     ? 'bg-yellow-500 text-black font-medium'
                                                                                     : iter.iteration === drawState.diceResult
                                                                                         ? 'bg-yellow-200 text-yellow-800 hover:bg-yellow-300 border border-yellow-500'
                                                                                         : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                                                                            }`}
+                                                                                }`}
                                                                         >
-                                                                            {iter.iteration === drawState.diceResult 
-                                                                                ? `Final (Round ${iter.iteration})` 
+                                                                            {iter.iteration === drawState.diceResult
+                                                                                ? `Final (Round ${iter.iteration})`
                                                                                 : `Round ${iter.iteration}`}
-                                                                            </button>
-                                                                        ))
+                                                                        </button>
+                                                                    ))
                                                                 )}
                                                             </>
                                                         )}
@@ -954,8 +986,7 @@ const Draw = () => {
                                                                         .find(i => i.iteration === drawState.selectedIteration)?.entries
                                                                         .map((entry, index) => ({ id: index + 1, entry })) || []
                                                                 }
-                                                                winners={drawState.winners}
-                                                                title={
+                                                                winners={drawState.winners} title={
                                                                     drawState.selectedIteration === 0
                                                                         ? "Initial Order"
                                                                         : drawState.selectedIteration === drawState.diceResult
@@ -963,6 +994,7 @@ const Draw = () => {
                                                                             : `After Round ${drawState.selectedIteration}`
                                                                 }
                                                                 numWinners={drawState.numWinners}
+                                                                fixedWinner={!!drawState.fixedWinnerNumber && drawState.selectedIteration === drawState.diceResult}
                                                             />
                                                         </div>
                                                     )}
@@ -970,12 +1002,12 @@ const Draw = () => {
                                             )}
                                         </AnimatePresence>
 
-                                        {/* Current Results Table */}
-                                        <EntryTable
+                                        {/* Current Results Table */}                                        <EntryTable
                                             entries={drawState.shuffledEntries.map((entry, index) => ({ id: index + 1, entry }))}
                                             winners={drawState.winners}
                                             title="Final Result"
                                             numWinners={drawState.numWinners}
+                                            fixedWinner={!!drawState.fixedWinnerNumber}
                                         />
                                     </motion.div>
                                 )}
@@ -1028,16 +1060,24 @@ const Draw = () => {
                         </motion.div>
 
                     </motion.div>
-                </div>
-
-                <div className="mt-8 border-t border-gray-200 pt-6">
-                    <div className="flex flex-wrap gap-4 md:gap-10 justify-center items-center">
-                        <div className="relative">
-                            <img src="/start-button.svg" alt="Start Promo" width={160} height={80} className="w-32 md:w-40 lg:w-48" />
-                            <div style={{ fontFamily: 'CostaRica' }} onClick={startPromo} className="absolute inset-0 text-black flex items-center justify-center text-sm md:text-lg lg:text-xl font-bold cursor-pointer">
-                                Start Promo
-                            </div>
+                </div>                {/* Fixed Winner Input Section - Only shown before promo starts */}
+                <div className="mt-8 border-t  border-gray-200 pt-6">
+                    <div className="flex flex-wrap gap-4 md:gap-10 justify-center items-center">                        <div className="relative">
+                        <img
+                            src="/start-button.svg"
+                            alt="Start Promo"
+                            width={160}
+                            height={80}
+                            className={`w-32 md:w-40 lg:w-48 ${(!drawState.diceResult || drawState.diceResult < 1) ? 'opacity-50' : ''}`}
+                        />
+                        <div
+                            style={{ fontFamily: 'CostaRica' }}
+                            onClick={(!drawState.diceResult || drawState.diceResult < 1) ? undefined : startPromo}
+                            className={`absolute inset-0 text-black flex items-center justify-center text-sm md:text-lg lg:text-xl font-bold ${(!drawState.diceResult || drawState.diceResult < 1) ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                        >
+                            Start Promo
                         </div>
+                    </div>
 
                         <div>
                             <img
@@ -1064,7 +1104,42 @@ const Draw = () => {
                             </span>
                         </motion.button>
                     </div>
-                </div>
+                </div>                <AnimatePresence>
+                    {!drawState.promoStarted && drawState.showFixedWinnerInput && (
+                        <motion.div
+                            className="mb-6 flex max-w-[100px] flex-col items-center justify-center"
+                            initial={{ opacity: 1 }}
+                            exit={{ opacity: 0, height: 0 }}
+                            transition={{ duration: 0.3 }}
+                        >
+                            <div className="max-w-md w-full">
+                                <motion.div
+                                    className="p-3"
+                                    initial={{ opacity: 0, y: 20 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    transition={{ delay: 0.3, duration: 0.5 }}
+                                >
+                                    <div className="flex items-center">
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            max={drawState.originalEntries.length}
+                                            value={drawState.fixedWinnerNumber}
+                                            onChange={(e) => setDrawState(prev => ({ ...prev, fixedWinnerNumber: e.target.value }))}                                            onBlur={() => {
+                                                if (drawState.fixedWinnerNumber !== '') {
+                                                    setDrawState(prev => ({ ...prev, showFixedWinnerInput: false }));
+                                                }
+                                            }}
+                                            disabled={drawState.promoStarted}
+                                            placeholder=""
+                                            className="flex-grow px-3 py-2 bg-white text-gray-800 rounded-md shadow-sm focus:outline-none focus:ring-1 focus:ring-gray-300"
+                                        />
+                                    </div>
+                                </motion.div>
+                            </div>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
 
                 <AnimatePresence>
                     {drawState.winners.length > 0 && (
@@ -1084,29 +1159,28 @@ const Draw = () => {
                                 {drawState.winners.length === 1 ? "Winner:" : `Winners (${drawState.winners.length}):`}
                             </motion.h2>
                             <div className="space-y-3">
-                                {drawState.winners.map((winnerEntry, index) => (
-                                    <motion.div
-                                        key={index}
-                                        className="p-3 bg-gray-100 rounded-lg shadow-lg border border-yellow-300"
-                                        initial={{ opacity: 0, x: -30 }}
-                                        animate={{ opacity: 1, x: 0 }}
-                                        transition={{
-                                            delay: 0.3 + (index * 0.2),
-                                            type: "spring",
-                                            stiffness: 120,
-                                            damping: 10
-                                        }}
-                                        whileHover={{ scale: 1.02 }}
-                                    >
-                                        <div className="flex items-start gap-3">
-                                            <div className="flex-shrink-0 w-8 h-8 rounded-full bg-yellow-500 flex items-center justify-center text-black font-bold">
-                                                {index + 1}
-                                            </div>
-                                            <div className="text-gray-800 font-medium break-words">
-                                                {winnerEntry.replace(/-\d+$/, '')}
-                                            </div>
+                                {drawState.winners.map((winnerEntry, index) => (<motion.div
+                                    key={index}
+                                    className="p-3 bg-gray-100 rounded-lg shadow-lg border border-yellow-300"
+                                    initial={{ opacity: 0, x: -30 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    transition={{
+                                        delay: 0.3 + (index * 0.2),
+                                        type: "spring",
+                                        stiffness: 120,
+                                        damping: 10
+                                    }}
+                                    whileHover={{ scale: 1.02 }}
+                                >
+                                    <div className="flex items-start gap-3">
+                                        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-yellow-500 flex items-center justify-center text-black font-bold">
+                                            {index + 1}
                                         </div>
-                                    </motion.div>
+                                        <div className="text-gray-800 font-medium break-words">
+                                            {winnerEntry.replace(/-\d+$/, '')}
+                                        </div>
+                                    </div>
+                                </motion.div>
                                 ))}
                             </div>
                             <motion.div
@@ -1134,10 +1208,7 @@ const Draw = () => {
                         {drawState.saveStatus}
                     </motion.div>
                 )}
-            </AnimatePresence>
-
-
-        </div>
+            </AnimatePresence>        </div>
     );
 };
 

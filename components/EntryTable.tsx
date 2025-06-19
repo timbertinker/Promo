@@ -7,9 +7,10 @@ interface EntryTableProps {
   winners?: string[]
   title: string
   numWinners: number
+  fixedWinner?: boolean  // New prop to indicate if the first winner is a fixed winner
 }
 
-const EntryTable = ({ entries, winners = [], title, numWinners }: EntryTableProps) => {
+const EntryTable = ({ entries, winners = [], title, numWinners, fixedWinner = false }: EntryTableProps) => {
   console.log(entries);
   console.log(winners);
   return (
@@ -51,14 +52,14 @@ const EntryTable = ({ entries, winners = [], title, numWinners }: EntryTableProp
                     {entry.replace(/-\d+$/, '')}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap text-sm text-right text-black">
-                    {isWinner && (
-                      <motion.span
-                        className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium  text-yellow-700"
+                    {isWinner && (                      <motion.span
+                        className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                          fixedWinner && rank === 1 ? 'bg-yellow-100 text-yellow-700 border border-yellow-300' : 'text-yellow-700'
+                        }`}
                         initial={{ opacity: 0, scale: 0 }}
                         animate={{ opacity: 1, scale: 1 }}
                         transition={{ delay: 0.2, type: "spring" }}
-                      >
-                        {rank <= numWinners && title.includes('Final Result') ? "Winner 🏆" : null}
+                      >{rank <= numWinners && title.includes('Final Result') ? "Winner 🏆" : null}
                       </motion.span>
                     )}
                   </td>
